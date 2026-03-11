@@ -1,0 +1,119 @@
+---
+title: "Tugas Akhir UTS ADT"
+author: "Wifaro"
+date: "2026-03-11"
+output:
+  html_document:
+    theme: journal
+    highlight: tango
+    toc: true
+    toc_float: true
+---
+
+```{r}
+library(survival)
+library(survminer)
+library(dplyr)
+```
+
+# Persiapan Data
+
+```{r}
+df = read.csv("C:/Users/admin2/Downloads/WA_Fn-UseC_-Telco-Customer-Churn.csv")
+
+# Data Cleaning: Kalau Churn Yes = 1, sedangkan No = 0
+df = df %>%
+  mutate(status = ifelse(Churn == "Yes", 1, 0))
+
+df = df %>%
+  filter(Contract %in% c("Month-to-month", "One year"))
+
+head(df)
+```
+
+# Metode Estimasi Fungsi Survival
+
+## Fungsi Empiris
+
+Dengan data utama, tapi menghilangkan data yang tersensor
+
+```{r}
+data_tanpa_sensor <- subset(df, status == 1)
+
+objek_surv <- Surv(time = data_tanpa_sensor$tenure, event = data_tanpa_sensor$status)
+
+print(objek_surv)
+```
+
+```{r}
+fit_empiris <- survfit(objek_surv ~ Contract, data = data_tanpa_sensor)
+
+summary(fit_empiris)
+```
+
+## Life Table
+
+```{r}
+# Buat interval tiap 1 tahun
+interval_LT = seq(0, max(df$tenure, na.rm=TRUE) + 12, by=12)
+
+# Menghitung Life Table Interval
+life_table = df %>%
+  mutate(interval = cut(tenure, breaks = interval_LT, right = FALSE)) %>%
+  group_by(interval) %>%
+  summarise(
+    event_churn = sum(status == 1),
+    sensor = sum(status == 0)
+  ) %>%
+  mutate(
+    n_risk = nrow(df) - lag(cumsum(event_churn + sensor), default = 0),
+    n_risk_adj = n_risk - (sensor / 2),
+    q = event_churn / n_risk_adj,
+    p = 1 - q,
+    Survival = cumprod(p)
+  )
+
+print(as.data.frame(life_table))
+```
+
+## Kaplan-Meier
+
+Ingin dibandingkan antara pelanggan dengan kontrak "Month-to-month" dan "One year". Oleh karena itu, kita akan memfilter data untuk hanya menyertakan kedua jenis kontrak tersebut.
+
+```{r}
+# Model Kaplan-Meier
+kaplan_meier = survfit(Surv(tenure, status) ~ Contract, data = df)
+
+summary(kaplan_meier)
+```
+
+## Uji Log-Rank
+
+H0: Tidak ada perbedaan kurva survival antar kelompok
+H1: Ada perbedaan kurva survival antar kelompok
+
+```{r}
+test_logrank = survdiff(Surv(tenure, status) ~ Contract, data = df)
+
+print(test_logrank)
+```
+
+Karena p-value < 0.05, maka tolak H0. Artinya, terdapat perbedaan daya tahan yang signifikan secara statistik antara pelanggan dengan kontrak "Month-to-month" dan "One year".
+
+# Visualisasi Kurva
+
+Visualisasi kurva kaplan-meier dengan tambahan nilai p-value dari uji log-rank
+
+```{r}
+ggsurvplot(kaplan_meier,
+           data = df,
+           pval = TRUE,
+           conf.int = TRUE,
+           surv.median.line = "hv",
+           legend.labs = c("Month-to-month", "One year"),
+           palette = c("#2E9FDF", "#E7B800"),
+           title = "Kurva Survival Berdasarkan Layanan Internet",
+           xlab = "Waktu Langganan (Bulan)",
+           ylab = "Probabilitas Survival")
+```
+
